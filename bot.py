@@ -48,6 +48,11 @@ log = logging.getLogger("xp-selfbot")
 
 STOP_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "STOP")
 REACTION_EMOJIS = ["👍", "😂", "🔥", "❤️", "👀", "🙌", "😮", "👏"]
+# A channel that fails this many times in a row is skipped for
+# CHANNEL_BLOCK_SECONDS (it may have been deleted or the account kicked);
+# a later success clears the count.
+CHANNEL_FAIL_LIMIT = 3
+CHANNEL_BLOCK_SECONDS = 3600
 
 
 # ---------------------------------------------------------------------------
@@ -95,6 +100,13 @@ def typing_delay(text: str, rng: random.Random) -> float:
     return max(1.0, min(12.0, len(text) / 14.0 + rng.uniform(0.5, 2.0)))
 
 
+def daily_summary_line(day, sent: int, replies: int, rate_limits: int,
+                       level_ups: int) -> str:
+    """One-line daily summary for the log."""
+    return (f"Daily summary {day}: {sent} messages sent, {replies} replies, "
+            f"{rate_limits} rate limits, {level_ups} level-ups detected.")
+
+
 def retry_after_seconds(exc, default: float = 60.0) -> float | None:
     """Seconds Discord asks us to wait after a 429, or None if not a 429.
 
@@ -129,8 +141,10 @@ def choose_next_action(cfg: dict, state: dict, rng: random.Random,
             float(cfg.get("break_min", 600)), float(cfg.get("break_max", 1800))
         )
         return ("break", seconds)
+    blocked = state.get("blocked_channels", set())
     targets = [t for t in cfg.get("targets", [])
-               if t.get("channel_id") not in cfg.get("avoid_channels", [])]
+               if t.get("channel_id") not in cfg.get("avoid_channels", [])
+               and t.get("channel_id") not in blocked]
     if not targets:
         return ("idle", 60.0)
     target = rng.choice(targets)
@@ -156,10 +170,17 @@ class SelfBot(discord.Client):
         }
         self.sent_today = 0
         self.sent_date = date.today()
+        self.replies_today = 0
+        self.rate_limits_today = 0
+        self.level_ups_today = 0
         self.last_reply_at: dict[int, float] = {}
         self.history: dict[int, deque] = {}
         # Monotonic timestamp until which all sends pause (set on 429).
         self.rate_limited_until: float = 0.0
+        # Consecutive per-channel failures, and channels skipped until a
+        # monotonic timestamp (dead-channel block).
+        self.channel_failures: dict[int, int] = {}
+        self.channel_blocked_until: dict[int, float] = {}
         self._xp_task: asyncio.Task | None = None
 
     # -- lifecycle ---------------------------------------------------------
@@ -185,6 +206,7 @@ class SelfBot(discord.Client):
         wait = retry_after_seconds(exc)
         if wait is None:
             return
+        self.rate_limits_today += 1
         pause = wait + 5.0
         self.rate_limited_until = time.monotonic() + pause
         log.warning("Rate limited (429) by Discord, pausing sends for %.0f seconds.",
@@ -193,12 +215,48 @@ class SelfBot(discord.Client):
     def _rate_limited(self) -> bool:
         return time.monotonic() < self.rate_limited_until
 
+    # -- dead channels -----------------------------------------------------
+    def _blocked_channel_ids(self) -> set[int]:
+        now = time.monotonic()
+        return {cid for cid, until in self.channel_blocked_until.items()
+                if until > now}
+
+    def _channel_blocked(self, channel_id: int) -> bool:
+        return channel_id in self._blocked_channel_ids()
+
+    def _note_channel_failure(self, channel_id: int) -> None:
+        """Count a failed send/fetch; block the channel after N in a row.
+
+        A 429 is NOT a channel failure (Discord is limiting us, the channel
+        is fine) -- callers must skip this for 429s.
+        """
+        count = self.channel_failures.get(channel_id, 0) + 1
+        self.channel_failures[channel_id] = count
+        if count >= CHANNEL_FAIL_LIMIT:
+            self.channel_blocked_until[channel_id] = (
+                time.monotonic() + CHANNEL_BLOCK_SECONDS)
+            self.channel_failures[channel_id] = 0
+            log.warning("Channel %s failed %d times, skipping it for %d seconds.",
+                        channel_id, CHANNEL_FAIL_LIMIT, CHANNEL_BLOCK_SECONDS)
+
+    def _note_channel_success(self, channel_id: int) -> None:
+        self.channel_failures.pop(channel_id, None)
+        self.channel_blocked_until.pop(channel_id, None)
+
     # -- helpers -----------------------------------------------------------
     def _reset_daily_counter(self):
         today = date.today()
         if today != self.sent_date:
+            if (self.sent_today or self.replies_today
+                    or self.rate_limits_today or self.level_ups_today):
+                log.info(daily_summary_line(
+                    self.sent_date, self.sent_today, self.replies_today,
+                    self.rate_limits_today, self.level_ups_today))
             self.sent_date = today
             self.sent_today = 0
+            self.replies_today = 0
+            self.rate_limits_today = 0
+            self.level_ups_today = 0
 
     def _record_history(self, channel_id: int, role: str, content: str):
         queue = self.history.setdefault(channel_id, deque(maxlen=8))
@@ -211,6 +269,8 @@ class SelfBot(discord.Client):
                 channel = await self.fetch_channel(channel_id)
             except (discord.NotFound, discord.Forbidden, discord.HTTPException) as exc:
                 self._note_rate_limit(exc)
+                if retry_after_seconds(exc) is None:
+                    self._note_channel_failure(channel_id)
                 log.warning("Cannot access channel %s: %s", channel_id, exc)
                 return None
         return channel
@@ -232,10 +292,13 @@ class SelfBot(discord.Client):
             await channel.send(text)
         except discord.HTTPException as exc:
             self._note_rate_limit(exc)
+            if retry_after_seconds(exc) is None:
+                self._note_channel_failure(channel.id)
             log.warning("Cannot send to #%s: %s",
                         getattr(channel, "name", channel.id), exc)
             return False
         self.sent_today += 1
+        self._note_channel_success(channel.id)
         log.info("Sent to #%s: %s", getattr(channel, "name", channel.id), text)
         return True
 
@@ -271,12 +334,14 @@ class SelfBot(discord.Client):
                 log.info("STOP file found, shutting down.")
                 await self.close()
                 return
+            self._reset_daily_counter()
             if self._rate_limited():
                 remaining = self.rate_limited_until - time.monotonic()
                 log.info("Rate limited, waiting %.0f more seconds.", remaining)
                 await asyncio.sleep(min(remaining, 30.0))
                 continue
             state["sent_today"] = self.sent_today
+            state["blocked_channels"] = self._blocked_channel_ids()
             action, payload = choose_next_action(
                 self.cfg, state, self.rng, datetime.now()
             )
@@ -307,6 +372,8 @@ class SelfBot(discord.Client):
             messages = [m async for m in channel.history(limit=5)]
         except (discord.Forbidden, discord.HTTPException) as exc:
             self._note_rate_limit(exc)
+            if retry_after_seconds(exc) is None:
+                self._note_channel_failure(channel.id)
             log.warning("Cannot read history in #%s: %s",
                         getattr(channel, "name", channel.id), exc)
             return
@@ -323,6 +390,8 @@ class SelfBot(discord.Client):
             await target.add_reaction(emoji)
         except (discord.Forbidden, discord.HTTPException) as exc:
             self._note_rate_limit(exc)
+            if retry_after_seconds(exc) is None:
+                self._note_channel_failure(channel.id)
             log.warning("Cannot react: %s", exc)
 
     # -- incoming messages ---------------------------------------------------
@@ -358,6 +427,7 @@ class SelfBot(discord.Client):
         if self.user is None:
             return
         if str(self.user.id) in content or self.user.name.lower() in content:
+            self.level_ups_today += 1
             log.info("LEVEL UP detected: %s", message.content)
 
     async def _answer(self, message: discord.Message):
@@ -394,6 +464,7 @@ class SelfBot(discord.Client):
             sent = await message.reply(reply)
             self._record_history(channel_id, "assistant", reply)
             self.sent_today += 1
+            self.replies_today += 1
             log.info("Replied (msg %s).", sent.id)
         except (discord.Forbidden, discord.HTTPException) as exc:
             self._note_rate_limit(exc)

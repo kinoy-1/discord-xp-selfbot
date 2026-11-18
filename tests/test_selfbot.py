@@ -23,6 +23,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import discord
 
+from datetime import date, timedelta
+
 from ai_reply import (
     build_messages,
     detect_language,
@@ -32,6 +34,7 @@ from ai_reply import (
 from bot import (
     SelfBot,
     choose_next_action,
+    daily_summary_line,
     is_reply_to_us,
     retry_after_seconds,
     should_reply,
@@ -390,6 +393,97 @@ class TestRateLimit(unittest.TestCase):
         self.assertEqual(bot.sent_today, 0)
 
 
+class TestDailySummary(unittest.TestCase):
+    def test_summary_line_format(self):
+        line = daily_summary_line(date(2026, 11, 18), 187, 23, 1, 2)
+        self.assertIn("2026-11-18", line)
+        self.assertIn("187 messages sent", line)
+        self.assertIn("23 replies", line)
+        self.assertIn("1 rate limits", line)
+        self.assertIn("2 level-ups", line)
+
+    def test_reset_zeroes_counters_on_new_day(self):
+        cfg = load_config("/nonexistent/config.json")
+        cfg["targets"] = [{"guild_id": 1, "channel_id": 999, "language": "id"}]
+        bot = SelfBot(cfg)
+        bot.sent_date = date.today() - timedelta(days=1)
+        bot.sent_today = 5
+        bot.replies_today = 2
+        bot.rate_limits_today = 1
+        bot.level_ups_today = 1
+        bot._reset_daily_counter()
+        self.assertEqual(bot.sent_date, date.today())
+        self.assertEqual(bot.sent_today, 0)
+        self.assertEqual(bot.replies_today, 0)
+        self.assertEqual(bot.rate_limits_today, 0)
+        self.assertEqual(bot.level_ups_today, 0)
+
+    def test_reset_same_day_keeps_counters(self):
+        cfg = load_config("/nonexistent/config.json")
+        cfg["targets"] = [{"guild_id": 1, "channel_id": 999, "language": "id"}]
+        bot = SelfBot(cfg)
+        bot.sent_today = 5
+        bot._reset_daily_counter()
+        self.assertEqual(bot.sent_today, 5)
+
+
+class TestDeadChannel(unittest.TestCase):
+    def _bot(self):
+        cfg = load_config("/nonexistent/config.json")
+        cfg["targets"] = [{"guild_id": 1, "channel_id": 999, "language": "id"}]
+        return SelfBot(cfg)
+
+    def test_choose_next_action_skips_blocked(self):
+        from datetime import datetime
+        cfg = load_config("/nonexistent/config.json")
+        cfg["targets"] = [
+            {"guild_id": 1, "channel_id": 111, "language": "id"},
+            {"guild_id": 1, "channel_id": 222, "language": "id"},
+        ]
+        cfg["react_chance"] = 0.0
+        cfg["break_chance"] = 0.0
+        state = {"sent_today": 0, "blocked_channels": {111}}
+        action, target = choose_next_action(cfg, state, random.Random(0),
+                                            datetime(2026, 11, 18, 12, 0))
+        self.assertEqual(action, "send")
+        self.assertEqual(target["channel_id"], 222)
+        state["blocked_channels"] = {111, 222}
+        action, _ = choose_next_action(cfg, state, random.Random(0),
+                                       datetime(2026, 11, 18, 12, 0))
+        self.assertEqual(action, "idle")
+
+    def test_channel_blocked_after_three_failures(self):
+        bot = self._bot()
+        bot._note_channel_failure(999)
+        bot._note_channel_failure(999)
+        self.assertFalse(bot._channel_blocked(999))
+        bot._note_channel_failure(999)
+        self.assertTrue(bot._channel_blocked(999))
+        bot._note_channel_success(999)
+        self.assertFalse(bot._channel_blocked(999))
+
+    def test_429_does_not_count_as_channel_failure(self):
+        bot = self._bot()
+        bot.cfg["dry_run"] = False
+        bot.cfg["typing_enabled"] = False
+        channel = SimpleNamespace(id=999, name="general",
+                                  send=AsyncMock(side_effect=_http_exc(429, 30)))
+        result = asyncio.run(bot._send(channel, "hello"))
+        self.assertFalse(result)
+        self.assertTrue(bot._rate_limited())
+        self.assertEqual(bot.channel_failures.get(999, 0), 0)
+
+    def test_send_failures_block_channel(self):
+        bot = self._bot()
+        bot.cfg["dry_run"] = False
+        bot.cfg["typing_enabled"] = False
+        channel = SimpleNamespace(id=999, name="general",
+                                  send=AsyncMock(side_effect=_http_exc(403)))
+        for _ in range(3):
+            self.assertFalse(asyncio.run(bot._send(channel, "hello")))
+        self.assertTrue(bot._channel_blocked(999))
+
+
 class TestMenu(unittest.TestCase):
     def test_edit_interval_and_quit(self):
         cfg = load_config("/nonexistent/config.json")
@@ -428,6 +522,21 @@ class TestServiceFile(unittest.TestCase):
         self.assertIn("Restart=always", text)
         self.assertIn("ExecStart=", text)
         self.assertIn("WorkingDirectory=", text)
+
+    def test_update_script_fetches_code_and_restarts(self):
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        path = os.path.join(root, "update.sh")
+        with open(path, "r", encoding="utf-8") as f:
+            text = f.read()
+        self.assertIn("git fetch origin", text)
+        self.assertIn("systemctl restart", text)
+        checkout_lines = [line for line in text.splitlines()
+                          if "checkout origin/main" in line]
+        self.assertTrue(checkout_lines)
+        # Local settings must never be overwritten by an update.
+        self.assertTrue(all("config.json" not in line
+                            and ".env" not in line
+                            for line in checkout_lines))
 
 
 if __name__ == "__main__":

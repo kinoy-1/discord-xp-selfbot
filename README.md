@@ -112,6 +112,30 @@ discord-xp-selfbot`.
 Discord, berhenti kirim selama waktu itu (+5 detik buffer), lalu lanjut
 sendiri. Tidak ada pesan yang dipaksa terkirim saat sedang di-limit.
 
+**Ringkasan harian:** tiap ganti hari bot menulis satu baris ke log:
+
+```
+Daily summary 2026-11-18: 187 messages sent, 23 replies, 1 rate limits, 2 level-ups detected.
+```
+
+Cek cepat dengan `grep "Daily summary" selfbot.log`. Kalau ada baris itu,
+bot hidup dan bekerja; kalau tidak ada, bot mati atau tidak ada aktivitas.
+
+**Channel mati:** channel yang gagal kirim/ambil 3 kali berturut-turut
+di-skip selama 1 jam (misal channel dihapus atau akun di-kick dari server).
+Satu kiriman yang berhasil menghapus hitungan gagalnya. Rate-limit (429)
+tidak dihitung sebagai kegagalan channel.
+
+### Update dari GitHub
+
+```bash
+./update.sh
+```
+
+Menarik kode terbaru dari GitHub lalu restart service. Hanya file kode yang
+diperbarui; `config.json` dan `.env` tidak pernah disentuh, jadi pengaturan
+lokalmu aman.
+
 ### Termux (HP Android)
 
 Bisa, tapi bot mati kalau HP mati, kehabisan baterai, atau Android mematikan
@@ -145,6 +169,7 @@ kunci OpenRouter sendiri dan tidak dijalankan otomatis.
 | `ai_reply.py` | Klien OpenRouter + deteksi bahasa |
 | `menu.py` | Menu pengaturan interaktif |
 | `run.sh` | Script jalan |
+| `update.sh` | Tarik kode terbaru dari GitHub + restart service |
 | `discord-xp-selfbot.service` | Service systemd (auto-start + auto-restart) |
 | `tests/` | Unit test + tes live AI |
 
