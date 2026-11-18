@@ -92,6 +92,7 @@ def show_summary(cfg: dict, print_fn=print) -> None:
     print_fn(f"5. Istirahat acak   : {cfg['break_chance']*100:.0f}% tiap ronde, {cfg['break_min']}-{cfg['break_max']} dtk")
     print_fn(f"6. Auto-reply       : {'ON' if cfg['reply_enabled'] else 'OFF'}, peluang {cfg['reply_chance']*100:.0f}%, cooldown {cfg['reply_cooldown_seconds']} dtk")
     print_fn(f"7. Model AI         : {cfg['ai_model']}")
+    print_fn(f"   Base URL AI      : {cfg['ai_base_url']}")
     print_fn(f"8. Dry-run          : {'ON (tidak kirim apa-apa)' if cfg['dry_run'] else 'OFF (KIRIM BENARAN)'}")
     print_fn(f"9. Balas DM         : {'ON' if cfg['dm_reply'] else 'OFF'}")
     print_fn(f"10. Reaksi emoji    : {cfg['react_chance']*100:.0f}%")
@@ -128,6 +129,7 @@ def edit_loop(cfg: dict, input_fn=input, print_fn=print) -> dict:
             cfg["reply_chance"] = max(0.0, min(1.0, pct))
             cfg["reply_cooldown_seconds"] = _ask_int("Cooldown balasan (detik)", cfg["reply_cooldown_seconds"], input_fn, print_fn)
         elif choice == "7":
+            cfg["ai_base_url"] = _ask_text("Base URL AI", cfg["ai_base_url"], input_fn, print_fn)
             cfg["ai_model"] = _ask_text("Model AI", cfg["ai_model"], input_fn, print_fn)
         elif choice == "8":
             cfg["dry_run"] = _ask_yes_no("Dry-run (tidak kirim apa-apa)?", cfg["dry_run"], input_fn, print_fn)

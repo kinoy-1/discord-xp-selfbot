@@ -11,7 +11,7 @@ import json
 import urllib.error
 import urllib.request
 
-API_URL = "https://openrouter.ai/api/v1/chat/completions"
+DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
 DEFAULT_MODEL = "inclusionai/ling-3.2-flash:free"
 
 # Indonesian markers used for a fast language guess. The system prompt also
@@ -51,15 +51,21 @@ def generate_reply(
     *,
     api_key: str,
     model: str = DEFAULT_MODEL,
+    base_url: str = DEFAULT_BASE_URL,
     persona: str,
     history: list[dict] | None = None,
     user_message: str,
     max_tokens: int = 120,
     timeout: int = 30,
 ) -> str | None:
-    """Ask the model for a reply. Returns the reply text, or None on failure."""
+    """Ask the model for a reply. Returns the reply text, or None on failure.
+
+    Any provider with an OpenAI-compatible ``/chat/completions`` endpoint
+    works: pass its base URL (without a trailing slash) and its key.
+    """
     if not api_key:
         return None
+    url = base_url.rstrip("/") + "/chat/completions"
     payload = {
         "model": model,
         "messages": build_messages(persona, history or [], user_message),
@@ -67,7 +73,7 @@ def generate_reply(
         "temperature": 0.9,
     }
     req = urllib.request.Request(
-        API_URL,
+        url,
         data=json.dumps(payload).encode("utf-8"),
         method="POST",
     )

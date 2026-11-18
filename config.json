@@ -19,6 +19,7 @@
   "reply_enabled": true,
   "reply_chance": 0.75,
   "reply_cooldown_seconds": 120,
+  "ai_base_url": "https://openrouter.ai/api/v1",
   "ai_model": "inclusionai/ling-3.2-flash:free",
   "ai_max_tokens": 120,
   "ai_timeout": 30,

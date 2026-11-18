@@ -59,6 +59,22 @@ password Discord.
 Daftar di https://openrouter.ai/keys. Model default
 `inclusionai/ling-3.2-flash:free` gratis (biaya 0).
 
+### Pakai AI selain OpenRouter
+
+Bisa. Bot ini memakai endpoint yang kompatibel dengan OpenAI
+(`/chat/completions`), jadi provider lain tinggal diganti lewat `config.json`
+(`ai_base_url` + `ai_model`) dan key-nya di `.env` sebagai `AI_API_KEY`:
+
+| Provider | `ai_base_url` | Contoh `ai_model` | Status (dites 18 Nov 2026) |
+|---|---|---|---|
+| OpenRouter (default) | `https://openrouter.ai/api/v1` | `inclusionai/ling-3.2-flash:free` | Jalan |
+| Verboo | `https://code.verboo.ai/router/v1` | `deepseek-v4.1-flash` | Jalan |
+| OpenAI | `https://api.openai.com/v1` | `gpt-4o-mini` | Seharusnya jalan (belum dites) |
+| XingchiAPI | `https://xingchiapi.com/v1` | `gpt-6-astra` | **Diblokir provider** (403 `client_not_allowed`: hanya untuk coding client, script langsung ditolak) |
+
+Atau ubah lewat menu: `python menu.py` > pilihan 7. Provider yang tidak
+mendukung format chat-completions OpenAI tidak akan jalan.
+
 ## Menjalankan
 
 ```bash

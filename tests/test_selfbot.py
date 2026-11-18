@@ -162,6 +162,26 @@ class TestAiReply(unittest.TestCase):
         self.assertIsNone(generate_reply(api_key="", persona="P",
                                          user_message="hai"))
 
+    def test_generate_reply_custom_base_url(self):
+        payload = {"choices": [{"message": {"content": "ok"}}]}
+        captured = {}
+
+        class FakeOpener:
+            def open(self, req, timeout=None):
+                captured["url"] = req.full_url
+                return self._resp
+
+        fake = FakeOpener()
+        fake._resp = self._fake_urlopen(payload)
+        with patch("ai_reply.urllib.request.build_opener", return_value=fake):
+            text = generate_reply(
+                api_key="k", persona="P", user_message="hai",
+                base_url="https://xingchiapi.com/v1/",
+            )
+        self.assertEqual(text, "ok")
+        self.assertEqual(captured["url"],
+                         "https://xingchiapi.com/v1/chat/completions")
+
 
 class TestReplyLogic(unittest.TestCase):
     def test_is_reply_to_us_reference(self):

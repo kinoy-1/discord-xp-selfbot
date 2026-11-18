@@ -296,12 +296,15 @@ class SelfBot(discord.Client):
         channel_id = message.channel.id
         if not should_reply(self.cfg, self.rng, self.last_reply_at.get(channel_id), now):
             return
-        api_key = os.environ.get("OPENROUTER_API_KEY", "")
+        api_key = os.environ.get("AI_API_KEY") or os.environ.get(
+            "OPENROUTER_API_KEY", ""
+        )
         history = list(self.history.get(channel_id, []))
         lang = detect_language(message.content or "")
         reply = generate_reply(
             api_key=api_key,
             model=self.cfg.get("ai_model", ""),
+            base_url=self.cfg.get("ai_base_url", "https://openrouter.ai/api/v1"),
             persona=self.cfg.get("persona", ""),
             history=history,
             user_message=message.content or "",

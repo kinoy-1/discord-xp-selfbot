@@ -39,8 +39,11 @@ DEFAULT_CONFIG = {
     "reply_enabled": True,
     "reply_chance": 0.75,
     "reply_cooldown_seconds": 120,
-    # AI replies (OpenRouter). The model must be reachable with your key;
-    # ":free" models cost nothing.
+    # AI replies. Any provider with an OpenAI-compatible /chat/completions
+    # endpoint works -- set its base URL here and its key in .env as
+    # AI_API_KEY. The model must be reachable with your key; ":free" models
+    # on OpenRouter cost nothing.
+    "ai_base_url": "https://openrouter.ai/api/v1",
     "ai_model": "inclusionai/ling-3.2-flash:free",
     "ai_max_tokens": 120,
     "ai_timeout": 30,
@@ -134,6 +137,9 @@ def validate_config(cfg: dict) -> list[str]:
         problems.append("reply_chance must be between 0 and 1")
     if not cfg.get("ai_model"):
         problems.append("ai_model must not be empty")
+    base_url = cfg.get("ai_base_url", "")
+    if not (isinstance(base_url, str) and base_url.startswith("http")):
+        problems.append("ai_base_url must be an http(s) URL")
     if not cfg.get("persona"):
         problems.append("persona must not be empty")
     return problems
