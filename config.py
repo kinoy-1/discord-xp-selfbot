@@ -1,0 +1,155 @@
+"""Configuration for the Discord XP self-bot.
+
+All tunables live in ``config.json`` next to this file. Secrets (the Discord
+user token and the OpenRouter API key) live ONLY in ``.env`` -- never in
+``config.json`` and never in chat.
+"""
+from __future__ import annotations
+
+import json
+import os
+from copy import deepcopy
+from datetime import datetime
+
+CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+
+DEFAULT_CONFIG = {
+    # Server/channel targets for XP farming. guild_id 0 / channel_id 0 means
+    # "not configured yet" -- fill these in with the menu (menu.py) or by
+    # editing config.json. language: "id" or "en" per channel.
+    "targets": [
+        {"guild_id": 0, "channel_id": 0, "language": "id"},
+    ],
+    # Random wait between XP messages, in seconds. Most XP bots (MEE6,
+    # Arcane, ...) only award XP once per ~60s cooldown, so staying well
+    # above that looks human and wastes nothing.
+    "xp_interval_min": 90,
+    "xp_interval_max": 240,
+    # Hours the bot is active (local time of the machine it runs on).
+    # Outside this window the bot stays silent, like a person asleep.
+    "active_hours": {"start": 8, "end": 23},
+    # Hard cap on messages sent per day (XP + replies together). 0 = no cap.
+    "daily_message_cap": 220,
+    # Chance per XP loop iteration to take a random break (like a person
+    # putting the phone down), and how long that break lasts, in seconds.
+    "break_chance": 0.08,
+    "break_min": 600,
+    "break_max": 1800,
+    # Auto-replies to messages that reply to us or mention us.
+    "reply_enabled": True,
+    "reply_chance": 0.75,
+    "reply_cooldown_seconds": 120,
+    # AI replies (OpenRouter). The model must be reachable with your key;
+    # ":free" models cost nothing.
+    "ai_model": "inclusionai/ling-3.2-flash:free",
+    "ai_max_tokens": 120,
+    "ai_timeout": 30,
+    # Persona used for AI replies. Keep it short, casual, human.
+    "persona": (
+        "Kamu Kinoy, cowok Indonesia yang santai dan ramah di Discord. "
+        "Balas dengan singkat (1-3 kalimat), gaya obrolan biasa, kadang pakai "
+        "'wkwk' atau 'haha' kalau cocok. Jangan pernah mengaku sebagai bot atau AI. "
+        "Kalau ada yang menuduh kamu bot, sangkal dengan santai dan bercanda, "
+        "misalnya 'hah apaan sih wkwk'. Jawab SELALU dalam bahasa yang sama "
+        "dengan pesan yang kamu balas."
+    ),
+    # Show the "typing..." indicator before sending, like a real person.
+    "typing_enabled": True,
+    # Chance to react with an emoji to a recent message instead of sending
+    # an XP message in that round (variety; reactions earn no XP).
+    "react_chance": 0.15,
+    # Dry run: log what WOULD be sent, but send nothing. Use this first.
+    "dry_run": True,
+    # Reply to direct messages too (default off: only server replies).
+    "dm_reply": False,
+    # Channel IDs the bot must never send XP messages in.
+    "avoid_channels": [],
+}
+
+
+def load_config(path: str = CONFIG_PATH) -> dict:
+    """Load config.json, filling in any missing keys from the defaults."""
+    cfg = deepcopy(DEFAULT_CONFIG)
+    if os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as f:
+            stored = json.load(f)
+        if not isinstance(stored, dict):
+            raise ValueError(f"{path} must contain a JSON object")
+        _deep_update(cfg, stored)
+    return cfg
+
+
+def _deep_update(base: dict, override: dict) -> None:
+    for key, value in override.items():
+        if (
+            key in base
+            and isinstance(base[key], dict)
+            and isinstance(value, dict)
+        ):
+            _deep_update(base[key], value)
+        else:
+            base[key] = value
+
+
+def save_config(cfg: dict, path: str = CONFIG_PATH) -> None:
+    """Write the config back to config.json (secrets are never in here)."""
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, indent=2, ensure_ascii=False)
+        f.write("\n")
+
+
+def validate_config(cfg: dict) -> list[str]:
+    """Return a list of problems with the config; empty list means valid."""
+    problems: list[str] = []
+    targets = cfg.get("targets")
+    if not isinstance(targets, list) or not targets:
+        problems.append("targets must be a non-empty list")
+    else:
+        for i, t in enumerate(targets):
+            if not isinstance(t, dict):
+                problems.append(f"targets[{i}] must be an object")
+                continue
+            if not isinstance(t.get("channel_id"), int) or t.get("channel_id", 0) <= 0:
+                problems.append(f"targets[{i}].channel_id is not set (must be a Discord channel ID)")
+            if t.get("language", "id") not in ("id", "en"):
+                problems.append(f"targets[{i}].language must be 'id' or 'en'")
+    lo = cfg.get("xp_interval_min", 0)
+    hi = cfg.get("xp_interval_max", 0)
+    if not (isinstance(lo, int) and isinstance(hi, int) and 5 <= lo <= hi):
+        problems.append("xp_interval_min/max must be integers with 5 <= min <= max")
+    hours = cfg.get("active_hours", {})
+    if not (
+        isinstance(hours, dict)
+        and isinstance(hours.get("start"), int)
+        and isinstance(hours.get("end"), int)
+        and 0 <= hours["start"] <= 23
+        and 0 <= hours["end"] <= 23
+    ):
+        problems.append("active_hours.start/end must be integers 0-23")
+    cap = cfg.get("daily_message_cap", -1)
+    if not (isinstance(cap, int) and cap >= 0):
+        problems.append("daily_message_cap must be an integer >= 0")
+    chance = cfg.get("reply_chance", -1)
+    if not (isinstance(chance, (int, float)) and 0 <= chance <= 1):
+        problems.append("reply_chance must be between 0 and 1")
+    if not cfg.get("ai_model"):
+        problems.append("ai_model must not be empty")
+    if not cfg.get("persona"):
+        problems.append("persona must not be empty")
+    return problems
+
+
+def active_now(cfg: dict, now: datetime | None = None) -> bool:
+    """True when the current hour is inside the configured active window.
+
+    Handles overnight windows (e.g. start 20, end 2) correctly.
+    """
+    now = now or datetime.now()
+    start = cfg["active_hours"]["start"]
+    end = cfg["active_hours"]["end"]
+    hour = now.hour
+    if start == end:
+        return True  # same start/end = always active
+    if start < end:
+        return start <= hour < end
+    return hour >= start or hour < end
