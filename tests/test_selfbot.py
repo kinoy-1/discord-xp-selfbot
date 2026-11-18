@@ -14,6 +14,7 @@ import os
 import random
 import sys
 import tempfile
+import time
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -22,17 +23,23 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import discord
 
-from ai_reply import build_messages, detect_language, generate_reply
+from ai_reply import (
+    build_messages,
+    detect_language,
+    generate_reply,
+    generate_xp_message,
+)
 from bot import (
     SelfBot,
     choose_next_action,
     is_reply_to_us,
+    retry_after_seconds,
     should_reply,
     typing_delay,
 )
 from config import active_now, load_config, save_config, validate_config
 from menu import edit_loop
-from messages import MessageBank
+from messages import MessageBank, XP_MESSAGES_EN, XP_MESSAGES_ID
 
 
 def _msg(author_id=111, author_bot=False, content="hello", mentions=None,
@@ -51,6 +58,7 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(cfg["xp_interval_min"], 90)
         self.assertTrue(cfg["dry_run"])
         self.assertEqual(cfg["ai_model"], "inclusionai/ling-3.2-flash:free")
+        self.assertFalse(cfg["ai_xp_messages"])
 
     def test_save_load_roundtrip(self):
         with tempfile.TemporaryDirectory() as d:
@@ -107,6 +115,14 @@ class TestMessageBank(unittest.TestCase):
         with self.assertRaises(ValueError):
             MessageBank("xx")
 
+    def test_bank_is_large_and_has_no_duplicates(self):
+        # 80 ID + 72 EN: at ~220 messages/day the same line should not
+        # come back within a day.
+        self.assertGreaterEqual(len(XP_MESSAGES_ID), 70)
+        self.assertGreaterEqual(len(XP_MESSAGES_EN), 60)
+        self.assertEqual(len(set(XP_MESSAGES_ID)), len(XP_MESSAGES_ID))
+        self.assertEqual(len(set(XP_MESSAGES_EN)), len(XP_MESSAGES_EN))
+
 
 class TestAiReply(unittest.TestCase):
     def test_detect_language(self):
@@ -161,6 +177,16 @@ class TestAiReply(unittest.TestCase):
     def test_generate_reply_no_key_returns_none(self):
         self.assertIsNone(generate_reply(api_key="", persona="P",
                                          user_message="hai"))
+
+    def test_generate_xp_message_returns_first_line(self):
+        payload = {"choices": [{"message": {"content": "pagi semua wkwk\nbaris kedua"}}]}
+        with patch("ai_reply.urllib.request.build_opener") as opener_mock:
+            opener_mock.return_value.open.return_value = self._fake_urlopen(payload)
+            text = generate_xp_message(api_key="k", persona="P", language="id")
+        self.assertEqual(text, "pagi semua wkwk")
+
+    def test_generate_xp_message_no_key_returns_none(self):
+        self.assertIsNone(generate_xp_message(api_key="", persona="P"))
 
     def test_generate_reply_custom_base_url(self):
         payload = {"choices": [{"message": {"content": "ok"}}]}
@@ -318,6 +344,52 @@ class TestSelfBotDryRun(unittest.TestCase):
         channel.send.assert_not_called()
 
 
+def _http_exc(status, retry_after=None):
+    headers = {"Retry-After": str(retry_after)} if retry_after is not None else {}
+    response = SimpleNamespace(status=status, reason="error", headers=headers)
+    return discord.HTTPException(response, f"HTTP {status}")
+
+
+class TestRateLimit(unittest.TestCase):
+    def test_retry_after_429_with_header(self):
+        self.assertEqual(retry_after_seconds(_http_exc(429, 5)), 5.0)
+
+    def test_retry_after_429_no_header_uses_default(self):
+        self.assertEqual(retry_after_seconds(_http_exc(429)), 60.0)
+
+    def test_retry_after_429_bad_header_uses_default(self):
+        exc = _http_exc(429)
+        exc.response.headers = {"Retry-After": "not-a-number"}
+        self.assertEqual(retry_after_seconds(exc), 60.0)
+
+    def test_retry_after_not_429_is_none(self):
+        self.assertIsNone(retry_after_seconds(_http_exc(403, 5)))
+        self.assertIsNone(retry_after_seconds(_http_exc(500, 5)))
+
+    def test_note_rate_limit_pauses_and_expires(self):
+        cfg = load_config("/nonexistent/config.json")
+        cfg["targets"] = [{"guild_id": 1, "channel_id": 999, "language": "id"}]
+        bot = SelfBot(cfg)
+        self.assertFalse(bot._rate_limited())
+        bot._note_rate_limit(_http_exc(429, 120))
+        self.assertTrue(bot._rate_limited())
+        bot.rate_limited_until = time.monotonic() - 1
+        self.assertFalse(bot._rate_limited())
+
+    def test_send_429_marks_rate_limit_and_returns_false(self):
+        cfg = load_config("/nonexistent/config.json")
+        cfg["targets"] = [{"guild_id": 1, "channel_id": 999, "language": "id"}]
+        bot = SelfBot(cfg)
+        bot.cfg["dry_run"] = False
+        bot.cfg["typing_enabled"] = False
+        channel = SimpleNamespace(id=999, name="general",
+                                  send=AsyncMock(side_effect=_http_exc(429, 30)))
+        result = asyncio.run(bot._send(channel, "hello"))
+        self.assertFalse(result)
+        self.assertTrue(bot._rate_limited())
+        self.assertEqual(bot.sent_today, 0)
+
+
 class TestMenu(unittest.TestCase):
     def test_edit_interval_and_quit(self):
         cfg = load_config("/nonexistent/config.json")
@@ -336,6 +408,26 @@ class TestMenu(unittest.TestCase):
                            print_fn=lambda *a, **k: print(*a, file=out, **k))
         self.assertIn("tidak dikenal", out.getvalue())
         self.assertEqual(result["xp_interval_min"], 90)
+
+    def test_menu_toggles_ai_xp_messages(self):
+        cfg = load_config("/nonexistent/config.json")
+        self.assertFalse(cfg["ai_xp_messages"])
+        inputs = iter(["12", "y", "0"])
+        out = io.StringIO()
+        result = edit_loop(cfg, input_fn=lambda _: next(inputs),
+                           print_fn=lambda *a, **k: print(*a, file=out, **k))
+        self.assertTrue(result["ai_xp_messages"])
+
+
+class TestServiceFile(unittest.TestCase):
+    def test_systemd_service_restarts_always(self):
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        path = os.path.join(root, "discord-xp-selfbot.service")
+        with open(path, "r", encoding="utf-8") as f:
+            text = f.read()
+        self.assertIn("Restart=always", text)
+        self.assertIn("ExecStart=", text)
+        self.assertIn("WorkingDirectory=", text)
 
 
 if __name__ == "__main__":

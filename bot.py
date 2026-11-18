@@ -23,13 +23,14 @@ import os
 import random
 import signal
 import sys
+import time
 from collections import deque
 from datetime import date, datetime
 
 import discord
 from dotenv import load_dotenv
 
-from ai_reply import detect_language, generate_reply
+from ai_reply import detect_language, generate_reply, generate_xp_message
 from config import CONFIG_PATH, active_now, load_config, validate_config
 from messages import MessageBank
 
@@ -94,6 +95,23 @@ def typing_delay(text: str, rng: random.Random) -> float:
     return max(1.0, min(12.0, len(text) / 14.0 + rng.uniform(0.5, 2.0)))
 
 
+def retry_after_seconds(exc, default: float = 60.0) -> float | None:
+    """Seconds Discord asks us to wait after a 429, or None if not a 429.
+
+    Reads the ``Retry-After`` response header; falls back to ``default``
+    when the header is missing or unparsable (it can be an HTTP date).
+    """
+    if getattr(exc, "status", None) != 429:
+        return None
+    headers = getattr(getattr(exc, "response", None), "headers", None) or {}
+    raw = headers.get("Retry-After") if hasattr(headers, "get") else None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return default
+    return max(1.0, value)
+
+
 def choose_next_action(cfg: dict, state: dict, rng: random.Random,
                        now: datetime) -> tuple[str, object]:
     """Decide the XP loop's next step. Returns (action, payload).
@@ -140,6 +158,8 @@ class SelfBot(discord.Client):
         self.sent_date = date.today()
         self.last_reply_at: dict[int, float] = {}
         self.history: dict[int, deque] = {}
+        # Monotonic timestamp until which all sends pause (set on 429).
+        self.rate_limited_until: float = 0.0
         self._xp_task: asyncio.Task | None = None
 
     # -- lifecycle ---------------------------------------------------------
@@ -159,6 +179,20 @@ class SelfBot(discord.Client):
     def stop_requested(self) -> bool:
         return os.path.exists(STOP_FILE)
 
+    # -- rate limiting -----------------------------------------------------
+    def _note_rate_limit(self, exc) -> None:
+        """Pause all sends after a Discord 429 (uses Retry-After + buffer)."""
+        wait = retry_after_seconds(exc)
+        if wait is None:
+            return
+        pause = wait + 5.0
+        self.rate_limited_until = time.monotonic() + pause
+        log.warning("Rate limited (429) by Discord, pausing sends for %.0f seconds.",
+                    pause)
+
+    def _rate_limited(self) -> bool:
+        return time.monotonic() < self.rate_limited_until
+
     # -- helpers -----------------------------------------------------------
     def _reset_daily_counter(self):
         today = date.today()
@@ -176,6 +210,7 @@ class SelfBot(discord.Client):
             try:
                 channel = await self.fetch_channel(channel_id)
             except (discord.NotFound, discord.Forbidden, discord.HTTPException) as exc:
+                self._note_rate_limit(exc)
                 log.warning("Cannot access channel %s: %s", channel_id, exc)
                 return None
         return channel
@@ -190,13 +225,42 @@ class SelfBot(discord.Client):
         if self.cfg.get("dry_run"):
             log.info("[DRY-RUN] #%s: %s", getattr(channel, "name", channel.id), text)
             return True
-        if self.cfg.get("typing_enabled"):
-            async with channel.typing():
-                await asyncio.sleep(typing_delay(text, self.rng))
-        await channel.send(text)
+        try:
+            if self.cfg.get("typing_enabled"):
+                async with channel.typing():
+                    await asyncio.sleep(typing_delay(text, self.rng))
+            await channel.send(text)
+        except discord.HTTPException as exc:
+            self._note_rate_limit(exc)
+            log.warning("Cannot send to #%s: %s",
+                        getattr(channel, "name", channel.id), exc)
+            return False
         self.sent_today += 1
         log.info("Sent to #%s: %s", getattr(channel, "name", channel.id), text)
         return True
+
+    async def _pick_xp_text(self, target: dict) -> str:
+        """Pick the next XP message: AI-generated when enabled, else the bank.
+
+        AI failure falls back to the bank, so a dead API never stops XP.
+        """
+        bank = self.banks[target.get("language", "id")]
+        if not self.cfg.get("ai_xp_messages"):
+            return bank.pick()
+        api_key = os.environ.get("AI_API_KEY") or os.environ.get(
+            "OPENROUTER_API_KEY", ""
+        )
+        text = generate_xp_message(
+            api_key=api_key,
+            model=self.cfg.get("ai_model", ""),
+            base_url=self.cfg.get("ai_base_url", "https://openrouter.ai/api/v1"),
+            language=target.get("language", "id"),
+            persona=self.cfg.get("persona", ""),
+        )
+        if text:
+            return text
+        log.warning("AI XP message failed, falling back to the message bank.")
+        return bank.pick()
 
     # -- XP farming loop ---------------------------------------------------
     async def xp_loop(self):
@@ -207,6 +271,11 @@ class SelfBot(discord.Client):
                 log.info("STOP file found, shutting down.")
                 await self.close()
                 return
+            if self._rate_limited():
+                remaining = self.rate_limited_until - time.monotonic()
+                log.info("Rate limited, waiting %.0f more seconds.", remaining)
+                await asyncio.sleep(min(remaining, 30.0))
+                continue
             state["sent_today"] = self.sent_today
             action, payload = choose_next_action(
                 self.cfg, state, self.rng, datetime.now()
@@ -226,8 +295,7 @@ class SelfBot(discord.Client):
             if action == "react":
                 await self._maybe_react(channel)
             else:
-                bank = self.banks[target.get("language", "id")]
-                await self._send(channel, bank.pick())
+                await self._send(channel, await self._pick_xp_text(target))
             wait = self.rng.uniform(
                 float(self.cfg.get("xp_interval_min", 90)),
                 float(self.cfg.get("xp_interval_max", 240)),
@@ -238,6 +306,7 @@ class SelfBot(discord.Client):
         try:
             messages = [m async for m in channel.history(limit=5)]
         except (discord.Forbidden, discord.HTTPException) as exc:
+            self._note_rate_limit(exc)
             log.warning("Cannot read history in #%s: %s",
                         getattr(channel, "name", channel.id), exc)
             return
@@ -253,6 +322,7 @@ class SelfBot(discord.Client):
         try:
             await target.add_reaction(emoji)
         except (discord.Forbidden, discord.HTTPException) as exc:
+            self._note_rate_limit(exc)
             log.warning("Cannot react: %s", exc)
 
     # -- incoming messages ---------------------------------------------------
@@ -275,7 +345,8 @@ class SelfBot(discord.Client):
                     resolved = await message.channel.fetch_message(ref.message_id)
                     if getattr(resolved.author, "id", None) == self.user.id:
                         await self._answer(message)
-                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                except (discord.NotFound, discord.Forbidden, discord.HTTPException) as exc:
+                    self._note_rate_limit(exc)
                     pass
             return
         await self._answer(message)
@@ -290,8 +361,6 @@ class SelfBot(discord.Client):
             log.info("LEVEL UP detected: %s", message.content)
 
     async def _answer(self, message: discord.Message):
-        import time
-
         now = time.time()
         channel_id = message.channel.id
         if not should_reply(self.cfg, self.rng, self.last_reply_at.get(channel_id), now):
@@ -327,6 +396,7 @@ class SelfBot(discord.Client):
             self.sent_today += 1
             log.info("Replied (msg %s).", sent.id)
         except (discord.Forbidden, discord.HTTPException) as exc:
+            self._note_rate_limit(exc)
             log.warning("Cannot reply: %s", exc)
 
     async def on_error(self, event, *args, **kwargs):

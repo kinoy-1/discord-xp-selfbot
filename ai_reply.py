@@ -47,30 +47,25 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         raise RuntimeError("redirect refused, verify the endpoint")
 
 
-def generate_reply(
+def _call_chat(
     *,
     api_key: str,
-    model: str = DEFAULT_MODEL,
-    base_url: str = DEFAULT_BASE_URL,
-    persona: str,
-    history: list[dict] | None = None,
-    user_message: str,
-    max_tokens: int = 120,
-    timeout: int = 30,
+    model: str,
+    base_url: str,
+    messages: list[dict],
+    max_tokens: int,
+    temperature: float,
+    timeout: int,
 ) -> str | None:
-    """Ask the model for a reply. Returns the reply text, or None on failure.
-
-    Any provider with an OpenAI-compatible ``/chat/completions`` endpoint
-    works: pass its base URL (without a trailing slash) and its key.
-    """
+    """One chat-completions call. Returns the reply text, None on failure."""
     if not api_key:
         return None
     url = base_url.rstrip("/") + "/chat/completions"
     payload = {
         "model": model,
-        "messages": build_messages(persona, history or [], user_message),
+        "messages": messages,
         "max_tokens": max_tokens,
-        "temperature": 0.9,
+        "temperature": temperature,
     }
     req = urllib.request.Request(
         url,
@@ -96,3 +91,71 @@ def generate_reply(
         return None
     text = text.strip()
     return text or None
+
+
+def generate_reply(
+    *,
+    api_key: str,
+    model: str = DEFAULT_MODEL,
+    base_url: str = DEFAULT_BASE_URL,
+    persona: str,
+    history: list[dict] | None = None,
+    user_message: str,
+    max_tokens: int = 120,
+    timeout: int = 30,
+) -> str | None:
+    """Ask the model for a reply. Returns the reply text, or None on failure.
+
+    Any provider with an OpenAI-compatible ``/chat/completions`` endpoint
+    works: pass its base URL (without a trailing slash) and its key.
+    """
+    return _call_chat(
+        api_key=api_key,
+        model=model,
+        base_url=base_url,
+        messages=build_messages(persona, history or [], user_message),
+        max_tokens=max_tokens,
+        temperature=0.9,
+        timeout=timeout,
+    )
+
+
+def generate_xp_message(
+    *,
+    api_key: str,
+    model: str = DEFAULT_MODEL,
+    base_url: str = DEFAULT_BASE_URL,
+    language: str = "id",
+    persona: str = "",
+    max_tokens: int = 60,
+    timeout: int = 30,
+) -> str | None:
+    """Generate one short, casual chat message for XP farming.
+
+    Returns None on any failure -- the caller falls back to the message
+    bank. The result is a single line, never a greeting with a name.
+    """
+    lang = "Bahasa Indonesia santai" if language == "id" else "casual English"
+    system = (
+        (persona + " " if persona else "")
+        + f"Tulis SATU pesan chat Discord singkat (satu kalimat, maksimal 15 kata) "
+        f"yang natural untuk grup, dalam {lang}. Boleh sapaan umum, reaksi, "
+        f"atau pertanyaan ringan. Jangan sebut nama orang. Jangan mengaku bot."
+    )
+    text = _call_chat(
+        api_key=api_key,
+        model=model,
+        base_url=base_url,
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": "Tulis satu pesan chat santai."},
+        ],
+        max_tokens=max_tokens,
+        temperature=1.0,
+        timeout=timeout,
+    )
+    if text is None:
+        return None
+    # Keep it to one line; drop any accidental multi-line output.
+    first = text.splitlines()[0].strip().strip('"')
+    return first or None

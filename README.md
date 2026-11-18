@@ -89,21 +89,28 @@ matikan dry-run dari menu.
 ```bash
 sudo apt update && sudo apt install -y python3-venv
 # clone repo ini, lalu ikuti instalasi di atas
-# jalankan sebagai service agar hidup terus:
-cat > /etc/systemd/system/discord-xp-selfbot.service <<'EOF'
-[Unit]
-Description=Discord XP self-bot
-After=network-online.target
-[Service]
-WorkingDirectory=/home/ubuntu/discord-xp-selfbot
-ExecStart=/home/ubuntu/discord-xp-selfbot/.venv/bin/python bot.py
-Restart=on-failure
-RestartSec=30
-[Install]
-WantedBy=multi-user.target
-EOF
+# jalankan sebagai service agar hidup terus dan restart otomatis:
+sudo cp discord-xp-selfbot.service /etc/systemd/system/
+sudo systemctl daemon-reload
 sudo systemctl enable --now discord-xp-selfbot
 ```
+
+Service memakai `Restart=always`, jadi bot hidup lagi sendiri kalau prosesnya
+mati atau VPS reboot. Cek status dan log:
+
+```bash
+sudo systemctl status discord-xp-selfbot
+journalctl -u discord-xp-selfbot -f
+```
+
+Kalau kamu clone repo di tempat lain atau pakai user lain, ubah `User=` dan
+path di `discord-xp-selfbot.service` sebelum install. Untuk berhenti darurat,
+buat file `STOP` di folder repo (`touch STOP`) atau `sudo systemctl stop
+discord-xp-selfbot`.
+
+**Kalau kena rate-limit (429):** bot membaca header `Retry-After` dari
+Discord, berhenti kirim selama waktu itu (+5 detik buffer), lalu lanjut
+sendiri. Tidak ada pesan yang dipaksa terkirim saat sedang di-limit.
 
 ### Termux (HP Android)
 
@@ -131,11 +138,20 @@ kunci OpenRouter sendiri dan tidak dijalankan otomatis.
 
 | File | Fungsi |
 |---|---|
-| `bot.py` | Bot utama (login, XP loop, auto-reply) |
+| `bot.py` | Bot utama (login, XP loop, auto-reply, penanganan 429) |
 | `config.py` | Load/validasi `config.json` |
 | `config.json` | Semua pengaturan (tanpa rahasia) |
-| `messages.py` | Bank pesan XP (ID + EN) |
+| `messages.py` | Bank pesan XP (80 ID + 72 EN) |
 | `ai_reply.py` | Klien OpenRouter + deteksi bahasa |
 | `menu.py` | Menu pengaturan interaktif |
 | `run.sh` | Script jalan |
+| `discord-xp-selfbot.service` | Service systemd (auto-start + auto-restart) |
 | `tests/` | Unit test + tes live AI |
+
+### Pesan XP dari AI (opsional)
+
+Secara default pesan XP diambil dari bank pesan (`messages.py`, 80 ID + 72
+EN, tidak pernah mengulang dari 10 pesan terakhir). Kalau mau variasinya
+tidak terbatas, nyalakan `ai_xp_messages` di `config.json` (atau menu pilihan
+12): tiap pesan XP digenerate AI dari persona kamu. Gagal API apa pun
+langsung jatuh kembali ke bank pesan, jadi XP tidak pernah berhenti.

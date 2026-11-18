@@ -97,6 +97,7 @@ def show_summary(cfg: dict, print_fn=print) -> None:
     print_fn(f"9. Balas DM         : {'ON' if cfg['dm_reply'] else 'OFF'}")
     print_fn(f"10. Reaksi emoji    : {cfg['react_chance']*100:.0f}%")
     print_fn(f"11. Persona         : {cfg['persona'][:80]}...")
+    print_fn(f"12. Pesan XP dari AI : {'ON (AI generate pesan XP)' if cfg.get('ai_xp_messages') else 'OFF (bank pesan)'}")
     print_fn("0. Simpan & keluar")
     print_fn("===============================")
 
@@ -144,6 +145,8 @@ def edit_loop(cfg: dict, input_fn=input, print_fn=print) -> dict:
             new = input_fn("Persona baru (kosongkan bila tidak diubah): ").strip()
             if new:
                 cfg["persona"] = new
+        elif choice == "12":
+            cfg["ai_xp_messages"] = _ask_yes_no("Pesan XP digenerate AI?", cfg.get("ai_xp_messages", False), input_fn, print_fn)
         else:
             print_fn("Pilihan tidak dikenal.")
         problems = validate_config(cfg)
