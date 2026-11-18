@@ -1,0 +1,32 @@
+# Discord XP self-bot -- systemd service (auto-start + auto-restart).
+#
+# Install on the VPS (adjust User= and the paths if you cloned elsewhere):
+#   sudo cp discord-xp-selfbot.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now discord-xp-selfbot
+#
+# Useful commands:
+#   sudo systemctl status discord-xp-selfbot   # is it running?
+#   sudo systemctl restart discord-xp-selfbot  # restart after a config change
+#   sudo systemctl stop discord-xp-selfbot     # stop it
+#   journalctl -u discord-xp-selfbot -f       # follow the live log
+#
+# The bot reads .env and config.json from its WorkingDirectory, and writes
+# selfbot.log there too.
+[Unit]
+Description=Discord XP self-bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/discord-xp-selfbot
+ExecStart=/home/ubuntu/discord-xp-selfbot/.venv/bin/python bot.py
+Restart=always
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
