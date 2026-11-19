@@ -23,15 +23,24 @@ def _ask_int(prompt: str, current: int, input_fn=input, print_fn=print) -> int:
         return current
 
 
-def _ask_float(prompt: str, current: float, input_fn=input, print_fn=print) -> float:
-    raw = input_fn(f"{prompt} [{current}]: ").strip()
+def _ask_percent(prompt: str, current: float, input_fn=input, print_fn=print) -> float:
+    """Ask for a chance as a percent, like the other menu numbers.
+
+    Type 8 for 8% (a 0-1 fraction still works too, so 0.08 also means 8%).
+    The config keeps storing a 0-1 fraction; only the prompt is in percent.
+    """
+    shown = current * 100
+    raw = input_fn(f"{prompt} (%) [{shown:g}]: ").strip()
     if raw == "":
         return current
     try:
-        return float(raw)
+        value = float(raw)
     except ValueError:
         print_fn("Bukan angka, nilai tidak diubah.")
         return current
+    if value > 1:
+        value = value / 100.0
+    return max(0.0, min(1.0, value))
 
 
 def _ask_text(prompt: str, current: str, input_fn=input, print_fn=print) -> str:
@@ -120,14 +129,12 @@ def edit_loop(cfg: dict, input_fn=input, print_fn=print) -> dict:
         elif choice == "4":
             cfg["daily_message_cap"] = _ask_int("Batas pesan per hari (0 = tanpa batas)", cfg["daily_message_cap"], input_fn, print_fn)
         elif choice == "5":
-            pct = _ask_float("Peluang istirahat per ronde (0-1)", cfg["break_chance"], input_fn, print_fn)
-            cfg["break_chance"] = max(0.0, min(1.0, pct))
+            cfg["break_chance"] = _ask_percent("Peluang istirahat per ronde", cfg["break_chance"], input_fn, print_fn)
             cfg["break_min"] = _ask_int("Istirahat minimum (detik)", cfg["break_min"], input_fn, print_fn)
             cfg["break_max"] = _ask_int("Istirahat maksimum (detik)", cfg["break_max"], input_fn, print_fn)
         elif choice == "6":
             cfg["reply_enabled"] = _ask_yes_no("Auto-reply aktif?", cfg["reply_enabled"], input_fn, print_fn)
-            pct = _ask_float("Peluang membalas (0-1)", cfg["reply_chance"], input_fn, print_fn)
-            cfg["reply_chance"] = max(0.0, min(1.0, pct))
+            cfg["reply_chance"] = _ask_percent("Peluang membalas", cfg["reply_chance"], input_fn, print_fn)
             cfg["reply_cooldown_seconds"] = _ask_int("Cooldown balasan (detik)", cfg["reply_cooldown_seconds"], input_fn, print_fn)
         elif choice == "7":
             cfg["ai_base_url"] = _ask_text("Base URL AI", cfg["ai_base_url"], input_fn, print_fn)
@@ -137,8 +144,7 @@ def edit_loop(cfg: dict, input_fn=input, print_fn=print) -> dict:
         elif choice == "9":
             cfg["dm_reply"] = _ask_yes_no("Balas DM juga?", cfg["dm_reply"], input_fn, print_fn)
         elif choice == "10":
-            pct = _ask_float("Peluang reaksi emoji (0-1)", cfg["react_chance"], input_fn, print_fn)
-            cfg["react_chance"] = max(0.0, min(1.0, pct))
+            cfg["react_chance"] = _ask_percent("Peluang reaksi emoji", cfg["react_chance"], input_fn, print_fn)
         elif choice == "11":
             print_fn("Persona saat ini:")
             print_fn(cfg["persona"])

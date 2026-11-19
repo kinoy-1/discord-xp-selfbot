@@ -512,6 +512,23 @@ class TestMenu(unittest.TestCase):
                            print_fn=lambda *a, **k: print(*a, file=out, **k))
         self.assertTrue(result["ai_xp_messages"])
 
+    def test_menu_break_chance_accepts_percent(self):
+        # Option 5 takes a percent now (8 = 8%), like the other menu numbers.
+        cfg = load_config("/nonexistent/config.json")
+        inputs = iter(["5", "8", "", "", "0"])
+        out = io.StringIO()
+        result = edit_loop(cfg, input_fn=lambda _: next(inputs),
+                           print_fn=lambda *a, **k: print(*a, file=out, **k))
+        self.assertEqual(result["break_chance"], 0.08)
+
+    def test_menu_break_chance_still_accepts_fraction(self):
+        cfg = load_config("/nonexistent/config.json")
+        inputs = iter(["5", "0.08", "", "", "0"])
+        out = io.StringIO()
+        result = edit_loop(cfg, input_fn=lambda _: next(inputs),
+                           print_fn=lambda *a, **k: print(*a, file=out, **k))
+        self.assertEqual(result["break_chance"], 0.08)
+
 
 class TestServiceFile(unittest.TestCase):
     def test_systemd_service_restarts_always(self):
