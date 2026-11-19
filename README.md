@@ -197,9 +197,9 @@ tidak dihitung sebagai kegagalan channel.
 ./update.sh
 ```
 
-Menarik kode terbaru dari GitHub lalu restart service. Hanya file kode yang
-diperbarui; `config.json` dan `.env` tidak pernah disentuh, jadi pengaturan
-lokalmu aman.
+Menarik kode terbaru dari GitHub lalu restart bot (service di VPS, proses
+nohup di Termux). Hanya file kode yang diperbarui; `config.json` dan `.env`
+tidak pernah disentuh, jadi pengaturan lokalmu aman.
 
 ### Termux (HP Android)
 

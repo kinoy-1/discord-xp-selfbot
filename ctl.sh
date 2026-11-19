@@ -33,7 +33,7 @@ jalankan() {
 }
 
 hentikan() {
-  if pkill -f bot.py 2>/dev/null; then
+  if pkill -f '(^|/)python[0-9.]* bot\.py$' 2>/dev/null; then
     echo "Bot berhenti."
   else
     echo "Bot sudah tidak jalan."
@@ -41,7 +41,7 @@ hentikan() {
 }
 
 mulai_ulang() {
-  pkill -f bot.py 2>/dev/null || true
+  pkill -f '(^|/)python[0-9.]* bot\.py$' 2>/dev/null || true
   sleep 2
   rm -f STOP
   termux-wake-lock 2>/dev/null || true
@@ -54,8 +54,8 @@ lihat_log() {
 }
 
 cek_status() {
-  if pgrep -f bot.py >/dev/null 2>&1; then
-    pgrep -af bot.py
+  if pgrep -f '(^|/)python[0-9.]* bot\.py$' >/dev/null 2>&1; then
+    pgrep -af '(^|/)python[0-9.]* bot\.py$'
     echo "--- log terakhir ---"
     tail -3 selfbot.log
   else
