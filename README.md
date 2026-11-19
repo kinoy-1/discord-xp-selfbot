@@ -84,6 +84,16 @@ mendukung format chat-completions OpenAI tidak akan jalan.
 Jalankan pertama kali dalam mode dry-run, periksa `selfbot.log`, baru
 matikan dry-run dari menu.
 
+Perintah gampang (tidak perlu hafal nohup/pkill/tail):
+
+```bash
+./ctl.sh start     # jalan di background
+./ctl.sh stop      # berhenti
+./ctl.sh restart   # berhenti lalu jalan lagi
+./ctl.sh log       # lihat log live (Ctrl+C untuk keluar, bot tetap jalan)
+./ctl.sh status    # cek bot jalan atau tidak + 3 baris log terakhir
+```
+
 ### VPS (disarankan, Ubuntu)
 
 ```bash
