@@ -30,13 +30,45 @@ aktif seperti manusia, dan membalas reply/mention dengan balasan AI
   berhenti dengan rapi. Rate limit Discord (429) juga membuat bot jeda
   otomatis.
 
-## Instalasi
+## Panduan lengkap (dari nol)
 
-```bash
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
-cp .env.example .env   # lalu isi DISCORD_TOKEN dan OPENROUTER_API_KEY
-```
+1. **Clone repo ini:**
+   ```bash
+   git clone https://github.com/kinoy-1/discord-xp-selfbot.git
+   cd discord-xp-selfbot
+   ```
+2. **Pasang Python + dependensi:**
+   ```bash
+   python3 -m venv .venv
+   .venv/bin/pip install -r requirements.txt
+   ```
+   (Termux: `pkg install python`, lalu `pip install -r requirements.txt`.)
+3. **Isi token dan key AI:**
+   ```bash
+   ./setup.sh
+   ```
+   Jawab dua pertanyaan (ketikan disembunyikan). Token Discord didapat
+   dari browser (lihat bawah) atau lewat curl (HP, lihat bawah); key AI
+   dari https://openrouter.ai/keys (gratis, model `:free` biaya 0).
+4. **Isi channel target:** `python menu.py` > pilihan 1, isi
+   `channel_id,bahasa` — contoh `1530597622245621921,id`. ID channel
+   didapat dari Discord: Settings > Advanced > nyalakan Developer Mode,
+   lalu klik kanan channel > Copy Channel ID.
+5. **Pasang perintah gampang (sekali saja):**
+   ```bash
+   ./pasang.sh
+   source ~/.bashrc   # atau tutup lalu buka lagi Termux-nya
+   ```
+6. **Jalankan bot:**
+   ```bash
+   bot jalan
+   ```
+   Bot jalan pertama kali dalam mode dry-run (hanya mencatat, tidak
+   mengirim). Periksa `bot log`, kalau sudah yakin matikan dry-run dari
+   menu (`python menu.py` > pilihan 8).
+
+Perintah sehari-hari: `bot jalan | berhenti | restart | log | status`,
+atau ketik `bot` saja untuk menu bernomor.
 
 ## Pengaturan
 
@@ -53,6 +85,18 @@ Buka Discord di browser (bukan aplikasi) > tekan F12 > tab Application >
 Local Storage > `https://discord.com` > cari `token`. Salin nilainya ke
 `.env`. Kalau token bocor, reset lewat Settings > Authorized Apps atau ganti
 password Discord.
+
+Kalau cara di atas tidak jalan (misal di browser HP, Local Storage-nya
+kosong), ambil token lewat login API dari Termux:
+
+```bash
+curl -s -X POST https://discord.com/api/v9/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"login":"EMAIL_KAMU","password":"PASSWORD_KAMU"}'
+```
+
+Jawabannya berisi `"token": "..."` — salin nilainya ke `.env`. Ketik
+email/password langsung di Termux saja, jangan pernah kirim lewat chat.
 
 ### Mendapatkan API key OpenRouter
 
@@ -189,6 +233,9 @@ kunci OpenRouter sendiri dan tidak dijalankan otomatis.
 | `messages.py` | Bank pesan XP (80 ID + 72 EN) |
 | `ai_reply.py` | Klien OpenRouter + deteksi bahasa |
 | `menu.py` | Menu pengaturan interaktif |
+| `setup.sh` | Setup awal: isi token + key AI ke `.env` |
+| `pasang.sh` | Pasang perintah `bot` ke `~/bin` (sekali saja) |
+| `ctl.sh` | Perintah `bot` (jalan/berhenti/restart/log/status + menu) |
 | `run.sh` | Script jalan |
 | `update.sh` | Tarik kode terbaru dari GitHub + restart service |
 | `discord-xp-selfbot.service` | Service systemd (auto-start + auto-restart) |
