@@ -3,13 +3,18 @@
 The reply is generated in the same language as the message being answered,
 following the persona from the config. On any failure (no key, timeout, API
 error) this returns None -- the caller then stays silent instead of sending
-a broken reply.
+a broken reply. Every failure is logged with its concrete reason (missing
+key, HTTP status + provider message, timeout, or empty content), so the
+log tells you what went wrong instead of just "AI failed".
 """
 from __future__ import annotations
 
 import json
+import logging
 import urllib.error
 import urllib.request
+
+log = logging.getLogger("xp-selfbot.ai")
 
 DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
 DEFAULT_MODEL = "inclusionai/ling-3.2-flash:free"
@@ -57,8 +62,14 @@ def _call_chat(
     temperature: float,
     timeout: int,
 ) -> str | None:
-    """One chat-completions call. Returns the reply text, None on failure."""
+    """One chat-completions call. Returns the reply text, None on failure.
+
+    Every failure is logged with its concrete reason, so a failed reply
+    tells you what went wrong (no key, HTTP status, timeout, empty
+    content) instead of failing silently.
+    """
     if not api_key:
+        log.warning("AI call skipped: no API key set (AI_API_KEY in .env).")
         return None
     url = base_url.rstrip("/") + "/chat/completions"
     payload = {
@@ -80,17 +91,36 @@ def _call_chat(
         opener = urllib.request.build_opener(_NoRedirect())
         with opener.open(req, timeout=timeout) as resp:
             data = json.load(resp)
-    except (urllib.error.HTTPError, urllib.error.URLError, RuntimeError,
-            TimeoutError, OSError, ValueError, KeyError):
+    except urllib.error.HTTPError as exc:
+        try:
+            detail = exc.read().decode("utf-8", "replace")[:200]
+        except Exception:
+            detail = ""
+        log.warning("AI call failed: HTTP %s from %s: %s",
+                    exc.code, base_url, detail or exc.msg)
+        return None
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        log.warning("AI call failed: network/timeout (%s).", exc)
+        return None
+    except (RuntimeError, ValueError, KeyError) as exc:
+        log.warning("AI call failed: %s.", exc)
         return None
     try:
-        text = data["choices"][0]["message"]["content"]
+        choice = data["choices"][0]
+        text = choice["message"]["content"]
     except (KeyError, IndexError, TypeError):
+        log.warning("AI call failed: unexpected response shape from %s.",
+                    base_url)
         return None
-    if not isinstance(text, str):
+    if not isinstance(text, str) or not text.strip():
+        reason = choice.get("finish_reason") if isinstance(choice, dict) else None
+        log.warning(
+            "AI returned no text (model=%s, finish_reason=%s). A reasoning "
+            "model may have spent its token budget thinking; try a "
+            "non-reasoning model or raise ai_max_tokens.",
+            model, reason)
         return None
-    text = text.strip()
-    return text or None
+    return text.strip()
 
 
 def generate_reply(

@@ -451,7 +451,7 @@ class SelfBot(discord.Client):
             timeout=int(self.cfg.get("ai_timeout", 30)),
         )
         if reply is None:
-            log.warning("AI reply failed (no key or API error), staying silent.")
+            log.warning("AI reply failed, staying silent (reason logged above).")
             return
         log.info("Replying in %s to %s: %s", lang, message.author, reply)
         self.last_reply_at[channel_id] = now

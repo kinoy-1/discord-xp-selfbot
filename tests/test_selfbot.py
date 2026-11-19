@@ -170,6 +170,35 @@ class TestAiReply(unittest.TestCase):
                                   user_message="hai")
         self.assertIsNone(text)
 
+    def test_generate_reply_http_error_logs_status(self):
+        import urllib.error
+        with patch("ai_reply.urllib.request.build_opener") as opener_mock:
+            opener_mock.return_value.open.side_effect = urllib.error.HTTPError(
+                "https://x", 429, "too many", {}, None)
+            with self.assertLogs("xp-selfbot.ai", level="WARNING") as logs:
+                generate_reply(api_key="test-key", persona="P",
+                               user_message="hai")
+        self.assertIn("HTTP 429", "".join(logs.output))
+
+    def test_generate_reply_empty_content_logs_finish_reason(self):
+        payload = {"choices": [{"finish_reason": "length",
+                                "message": {"content": None}}]}
+        with patch("ai_reply.urllib.request.build_opener") as opener_mock:
+            opener_mock.return_value.open.return_value = self._fake_urlopen(payload)
+            with self.assertLogs("xp-selfbot.ai", level="WARNING") as logs:
+                text = generate_reply(api_key="test-key", persona="P",
+                                      user_message="hai")
+        self.assertIsNone(text)
+        joined = "".join(logs.output)
+        self.assertIn("no text", joined)
+        self.assertIn("length", joined)
+
+    def test_generate_reply_no_key_logs_reason(self):
+        with self.assertLogs("xp-selfbot.ai", level="WARNING") as logs:
+            self.assertIsNone(generate_reply(api_key="", persona="P",
+                                             user_message="hai"))
+        self.assertIn("no API key", "".join(logs.output))
+
     def test_generate_reply_malformed_returns_none(self):
         with patch("ai_reply.urllib.request.build_opener") as opener_mock:
             opener_mock.return_value.open.return_value = self._fake_urlopen({})
