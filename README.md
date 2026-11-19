@@ -84,15 +84,26 @@ mendukung format chat-completions OpenAI tidak akan jalan.
 Jalankan pertama kali dalam mode dry-run, periksa `selfbot.log`, baru
 matikan dry-run dari menu.
 
-Perintah gampang (tidak perlu hafal nohup/pkill/tail):
+Perintah gampang (tidak perlu hafal nohup/pkill/tail). Pasang sekali saja:
 
 ```bash
-./ctl.sh start     # jalan di background
-./ctl.sh stop      # berhenti
-./ctl.sh restart   # berhenti lalu jalan lagi
-./ctl.sh log       # lihat log live (Ctrl+C untuk keluar, bot tetap jalan)
-./ctl.sh status    # cek bot jalan atau tidak + 3 baris log terakhir
+./pasang.sh
+source ~/.bashrc   # atau tutup lalu buka lagi Termux-nya
 ```
+
+Sesudah itu, dari folder mana saja:
+
+```bash
+bot jalan      # jalankan bot
+bot berhenti   # hentikan bot
+bot restart    # berhenti lalu jalan lagi
+bot log        # lihat log live (Ctrl+C untuk keluar, bot tetap jalan)
+bot status     # cek bot jalan atau tidak + 3 baris log terakhir
+```
+
+Atau ketik `bot` saja untuk menu bernomor. Perintah Inggris lama
+(`start`, `stop`) tetap jalan. Tanpa dipasang, perintah yang sama
+tetap bisa dipakai dari folder repo sebagai `./ctl.sh jalan`, dst.
 
 ### VPS (disarankan, Ubuntu)
 
